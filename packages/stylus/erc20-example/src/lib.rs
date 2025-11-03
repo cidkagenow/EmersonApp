@@ -14,6 +14,8 @@ use stylus_sdk::{
 };
 use alloc::string::String;
 use alloc::collections::BTreeMap;
+use openzeppelin_stylus::utils::pausable::{self, Pausable};
+
 
 
 const DECIMALS: U8 = uint!(10_U8);
@@ -26,6 +28,8 @@ pub struct EMtoken {
     capped: Capped,
     owner: Address,
     user_levels: BTreeMap<Address, U256>,
+    pausable: Pausable,
+
 
 
 }
