@@ -21,5 +21,9 @@ cargo stylus deploy \
 
 0x1ad155df670de75aebb889528acd23d4f69c4bc8
 
+### Verel link
+
+https://vercel.com/emersons-projects-7451887c/eeee
+
 
 
