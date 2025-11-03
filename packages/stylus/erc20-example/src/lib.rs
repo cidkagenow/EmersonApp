@@ -13,6 +13,8 @@ use stylus_sdk::{
     prelude::*,
 };
 use alloc::string::String;
+use alloc::collections::BTreeMap;
+
 
 const DECIMALS: U8 = uint!(10_U8);
 
@@ -23,6 +25,8 @@ pub struct EMtoken {
     metadata: Erc20Metadata,
     capped: Capped,
     owner: Address,
+    user_levels: BTreeMap<Address, U256>,
+
 
 }
 
@@ -58,6 +62,21 @@ impl EMtoken {
     pub fn total_supply(&self) -> U256 {
         self.erc20.total_supply()
     }
+
+     pub fn reward_user(&mut self, account: Address, value: U256) -> Result<(), String> {
+        let current = *self.user_levels.get(&account).unwrap_or(&U256::from(0));
+        let new_level = current + U256::from(1);
+        self.user_levels.insert(account, new_level);
+        if new_level % U256::from(3) == U256::from(0) {
+            self.mint(account, value)?;
+        }
+        Ok(())
+    }
+
+    pub fn get_user_level(&self, account: Address) -> U256 {
+        *self.user_levels.get(&account).unwrap_or(&U256::from(0))
+    }
+
 
     pub fn name(&self) -> String {
         self.metadata.name()
