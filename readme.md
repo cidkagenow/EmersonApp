@@ -23,7 +23,6 @@ cargo stylus deploy \
 
 ### Verel link
 
-https://vercel.com/emersons-projects-7451887c/eeee
-
+https://vercel.com/emersons-projects-7451887c/emerson-app-scaffold-stylus-nextjs
 
 
