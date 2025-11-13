@@ -1,7 +1,7 @@
 #![cfg_attr(not(any(test, feature = "export-abi")), no_main)]
 extern crate alloc;
 
-use alloc::vec::Vec;
+use alloc::{vec::Vec, string::String};
 
 use openzeppelin_stylus::{
     token::erc20::{
@@ -30,6 +30,7 @@ enum Error {
     InvalidApprover(erc20::ERC20InvalidApprover),
     EnforcedPause(pausable::EnforcedPause),
     ExpectedPause(pausable::ExpectedPause),
+    NotOwner, 
 }
 
 impl From<capped::Error> for Error {
@@ -70,27 +71,49 @@ struct Erc20Example {
     metadata: Erc20Metadata,
     capped: Capped,
     pausable: Pausable,
+
+    owner: Address,
+
+    levels: Vec<(Address, u64)>,
+
+    reward_amount: U256,
 }
 
 #[public]
 impl Erc20Example {
+    
     #[constructor]
-    pub fn constructor(&mut self, name: String, symbol: String, cap: U256) -> Result<(), Error> {
+    pub fn constructor(
+        &mut self,
+        owner: Address,
+        name: String,
+        symbol: String,
+        cap: U256,
+        reward_amount: U256,
+    ) -> Result<(), Error> {
         self.metadata.constructor(name, symbol);
         self.capped.constructor(cap)?;
+        self.owner = owner;
+        self.levels = Vec::new();
+        self.reward_amount = reward_amount;
         Ok(())
     }
 
-    // Add token minting feature.
-    //
-    // Make sure to handle `Capped` properly. You should not call
-    // [`Erc20::_update`] to mint tokens -- it will the break `Capped`
-    // mechanism.
-    pub fn mint(&mut self, account: Address, value: U256) -> Result<(), Error> {
-        self.pausable.when_not_paused()?;
-        let max_supply = self.capped.cap();
+   
+    fn ensure_owner(&self) -> Result<(), Error> {
+        let caller = env::caller();
+        if caller != self.owner {
+            return Err(Error::NotOwner);
+        }
+        Ok(())
+    }
 
-        // Overflow check required.
+ 
+    pub fn mint_owner(&mut self, to: Address, value: U256) -> Result<(), Error> {
+        self.ensure_owner()?;
+        self.pausable.when_not_paused()?;
+
+        let max_supply = self.capped.cap();
         let supply = self
             .erc20
             .total_supply()
@@ -104,23 +127,86 @@ impl Erc20Example {
             }))?;
         }
 
-        self.erc20._mint(account, value)?;
+        self.erc20._mint(to, value)?;
         Ok(())
     }
 
-    /// WARNING: These functions are intended for **testing purposes** only. In
-    /// **production**, ensure strict access control to prevent unauthorized
-    /// pausing or unpausing, which can disrupt contract functionality. Remove
-    /// or secure these functions before deployment.
+    pub fn burn_from_by_owner(&mut self, account: Address, value: U256) -> Result<(), Error> {
+        self.ensure_owner()?;
+        self.pausable.when_not_paused()?;
+        self.erc20._burn(account, value)?;
+        Ok(())
+    }
+
+
     pub fn pause(&mut self) -> Result<(), Error> {
+        self.ensure_owner()?;
         Ok(self.pausable.pause()?)
     }
 
     pub fn unpause(&mut self) -> Result<(), Error> {
+        self.ensure_owner()?;
         Ok(self.pausable.unpause()?)
     }
 
-    // IErc20 trait implementations
+  
+    fn _get_level_index(&self, account: Address) -> Option<usize> {
+        for (i, (addr, _lvl)) in self.levels.iter().enumerate() {
+            if *addr == account {
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    pub fn level_of(&self, account: Address) -> u64 {
+        match self._get_level_index(account) {
+            Some(i) => self.levels[i].1,
+            None => 0u64,
+        }
+    }
+
+    pub fn level_up(&mut self, account: Address) -> Result<(), Error> {
+        self.ensure_owner()?;
+        let idx_opt = self._get_level_index(account);
+        if let Some(i) = idx_opt {
+            let new_level = self.levels[i].1.checked_add(1).unwrap_or(self.levels[i].1 + 1);
+            self.levels[i].1 = new_level;
+            if new_level % 3 == 0 {
+                self.mint_owner(account, self.reward_amount)?;
+            }
+        } else {
+            self.levels.push((account, 1u64));
+        }
+        Ok(())
+    }
+
+    pub fn set_level(&mut self, account: Address, new_level: u64) -> Result<(), Error> {
+        self.ensure_owner()?;
+        if let Some(i) = self._get_level_index(account) {
+            self.levels[i].1 = new_level;
+        } else {
+            self.levels.push((account, new_level));
+        }
+        // if new_level is multiple of 3, mint reward once
+        if new_level > 0 && new_level % 3 == 0 {
+            self.mint_owner(account, self.reward_amount)?;
+        }
+        Ok(())
+    }
+
+    
+    pub fn transfer_ownership(&mut self, new_owner: Address) -> Result<(), Error> {
+        self.ensure_owner()?;
+        self.owner = new_owner;
+        Ok(())
+    }
+
+    pub fn owner(&self) -> Address {
+        self.owner
+    }
+
+
     pub fn total_supply(&self) -> U256 {
         self.erc20.total_supply()
     }
@@ -152,7 +238,6 @@ impl Erc20Example {
         Ok(self.erc20.transfer_from(from, to, value)?)
     }
 
-    // IErc20Burnable trait implementations
     pub fn burn(&mut self, value: U256) -> Result<(), Error> {
         self.pausable.when_not_paused()?;
         Ok(self.erc20.burn(value)?)
@@ -163,7 +248,6 @@ impl Erc20Example {
         Ok(self.erc20.burn_from(account, value)?)
     }
 
-    // IErc20Metadata trait implementations
     pub fn name(&self) -> String {
         self.metadata.name()
     }
@@ -176,17 +260,14 @@ impl Erc20Example {
         DECIMALS
     }
 
-    // ICapped trait implementations
     pub fn cap(&self) -> U256 {
         self.capped.cap()
     }
 
-    // IPausable trait implementations
     pub fn paused(&self) -> bool {
         self.pausable.paused()
     }
 
-    // IErc165 trait implementations
     pub fn supports_interface(&self, interface_id: B32) -> bool {
         Erc20::supports_interface(&self.erc20, interface_id)
             || Erc20Metadata::supports_interface(&self.metadata, interface_id)
